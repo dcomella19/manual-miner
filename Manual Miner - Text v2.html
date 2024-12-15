@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual Miner</title>
+    <script>
+        let transactions = [];
+        let blocks = [];  // List of blocks in the blockchain
+
+        // Toggle Dark Mode
+        function toggleDarkMode() {
+            const body = document.body;
+            const currentMode = body.getAttribute('data-theme');
+            if (currentMode === 'dark') {
+                body.setAttribute('data-theme', 'light');
+            } else {
+                body.setAttribute('data-theme', 'dark');
+            }
+        }
+
+        function updateTimestamp() {
+            const now = new Date();
+            const utcOffset = now.getTime() + now.getTimezoneOffset() * 60000;
+            const estTime = new Date(utcOffset - 5 * 3600000);
+            const month = (estTime.getMonth() + 1).toString().padStart(2, '0');
+            const day = estTime.getDate().toString().padStart(2, '0');
+            const year = estTime.getFullYear();
+            const hours = estTime.getHours().toString().padStart(2, '0');
+            const minutes = estTime.getMinutes().toString().padStart(2, '0');
+            const seconds = estTime.getSeconds().toString().padStart(2, '0');
+            return `${month}/${day}/${year} ${hours}:${minutes}:${seconds}`;
+        }
+
+        async function generateHash() {
+            const version = document.getElementById('version').value;
+            const prevHash = document.getElementById('prevHash').value;
+            const merkleRoot = document.getElementById('merkleRoot').value;
+            const timestamp = document.getElementById('timestamp').value;
+            const bits = document.getElementById('bits').value;
+            const nonce = document.getElementById('nonce').value;
+
+            const blockHeader = `${version}${prevHash}${merkleRoot}${timestamp}${bits}${nonce}`;
+            const encoder = new TextEncoder();
+            const data = encoder.encode(blockHeader);
+
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const hashHex = hashArray.map(byte => byte.toString(16).padStart(2, '0')).join('');
+
+            const hashOutput = document.getElementById('hashOutput');
+            hashOutput.innerText = hashHex;
+
+            if (hashHex.startsWith('0')) {
+                hashOutput.style.fontWeight = 'bold';
+                hashOutput.style.color = 'darkgreen';
+                alert("Congratulations! Proof of Work has been Completed. Mining Rewards will be sent to your Wallet");
+                createBlock(hashHex);  // Create a new block with the current transactions
+            } else {
+                hashOutput.style.fontWeight = 'normal';
+                hashOutput.style.color = 'black';
+            }
+        }
+
+        async function generateNonceHash() {
+            document.getElementById('nonce').value = Math.floor(Math.random() * 1e6);
+            document.getElementById('timestamp').value = updateTimestamp();
+            await generateHash();
+        }
+
+        function handleInputChange() {
+            generateHash();
+        }
+
+        function openTransactionForm() {
+            const formHtml = `
+                <form id="transactionForm">
+                    <label for="from">From:</label><br>
+                    <input type="text" id="from" placeholder="Sender Address" required><br><br>
+
+                    <label for="to">To:</label><br>
+                    <input type="text" id="to" placeholder="Recipient Address" required><br><br>
+
+                    <label for="currency">Currency:</label><br>
+                    <select id="currency" required>
+                        <option value="USDC">USDC</option>
+                        <option value="BTC">BTC</option>
+                        <option value="ETH">ETH</option>
+                        <option value="Tether">Tether</option>
+                        <option value="XRP">XRP</option>
+                    </select><br><br>
+
+                    <label for="amount">Amount:</label><br>
+                    <input type="number" id="amount" placeholder="e.g., 0.01" required><br><br>
+
+                    <label for="description">Description (optional):</label><br>
+                    <textarea id="description" placeholder="Add a description..."></textarea><br><br>
+
+                    <button type="button" onclick="submitTransaction()">Submit</button>
+                </form>
+            `;
+
+            const popup = document.createElement('div');
+            popup.id = 'transactionPopup';
+            popup.style.position = 'fixed';
+            popup.style.top = '50%';
+            popup.style.left = '50%';
+            popup.style.transform = 'translate(-50%, -50%)';
+            popup.style.backgroundColor = 'white';
+            popup.style.border = '1px solid #ccc';
+            popup.style.padding = '20px';
+            popup.style.boxShadow = '0 4px 8px rgba(0,0,0,0.1)';
+            popup.innerHTML = formHtml;
+
+            document.body.appendChild(popup);
+        }
+
+        async function submitTransaction() {
+            const from = document.getElementById('from').value;
+            const to = document.getElementById('to').value;
+            const currency = document.getElementById('currency').value;
+            const amount = document.getElementById('amount').value;
+            const description = document.getElementById('description').value;
+
+            if (!from || !to || !currency || !amount) {
+                alert("Please fill in all required fields.");
+                return;
+            }
+
+            const timestamp = updateTimestamp();
+            const transactionDetails = {
+                from, to, currency, amount, description, timestamp
+            };
+
+            const encoder = new TextEncoder();
+            const data = encoder.encode(JSON.stringify(transactionDetails));
+
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const hashHex = hashArray.map(byte => byte.toString(16).padStart(2, '0')).join('');
+
+            transactions.push({ hash: hashHex, details: transactionDetails });
+
+            updateMerkleRoot();  // Update Merkle Root after each transaction
+
+            const transactionList = document.getElementById('transactionList');
+            const listItem = document.createElement('li');
+            const link = document.createElement('a');
+            link.href = "#";
+            link.textContent = `Hash: ${hashHex}`;
+            link.onclick = () => {
+                alert(`Transaction Details:\n${JSON.stringify(transactionDetails, null, 2)}`);
+            };
+
+            const copyButton = document.createElement('button');
+            copyButton.textContent = 'Copy';
+            copyButton.onclick = () => copyTransactionData(transactionDetails);
+
+            listItem.appendChild(link);
+            listItem.appendChild(copyButton);
+            transactionList.appendChild(listItem);
+
+            document.getElementById('transactionPopup').remove();
+        }
+
+        function copyTransactionData(transactionDetails) {
+            const dataToCopy = JSON.stringify(transactionDetails, null, 2);
+            navigator.clipboard.writeText(dataToCopy).then(() => {
+                alert("Transaction data copied to clipboard!");
+            }, (err) => {
+                console.error('Error copying data: ', err);
+            });
+        }
+
+        // Function to calculate and update the Merkle Root
+        async function updateMerkleRoot() {
+            const hashes = transactions.map(transaction => transaction.hash);
+            let currentLevel = hashes;
+
+            while (currentLevel.length > 1) {
+                const nextLevel = [];
+                for (let i = 0; i < currentLevel.length; i += 2) {
+                    const pair = currentLevel[i + 1] ? currentLevel[i] + currentLevel[i + 1] : currentLevel[i];
+                    nextLevel.push(await calculateHash(pair));
+                }
+                currentLevel = nextLevel;
+            }
+
+            const merkleRoot = currentLevel[0];
+            document.getElementById('merkleRoot').value = merkleRoot;
+        }
+
+        async function calculateHash(data) {
+            const encoder = new TextEncoder();
+            const dataBuffer = encoder.encode(data);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            return hashArray.map(byte => byte.toString(16).padStart(2, '0')).join('');
+        }
+
+        function createBlock(hashHex) {
+            const block = {
+                blockNumber: blocks.length + 1,
+                transactions: [...transactions],
+                blockHash: hashHex,
+                timestamp: updateTimestamp()
+            };
+
+            blocks.push(block);
+            updateBlocksList();  // Update blocks list on the page
+            transactions = [];  // Clear transactions for the next block
+            updateMerkleRoot();  // Reset Merkle Root for next block
+            updateTransactionList(); // Clear the transaction list on the page
+
+            // Update the Previous Block Hash field to the hash of the newly created block
+            const prevHashField = document.getElementById('prevHash');
+            prevHashField.value = block.blockHash;
+        }
+
+        // Function to update the list of blocks
+        function updateBlocksList() {
+            const blocksList = document.getElementById('blocksList');
+            blocksList.innerHTML = '';  // Clear existing block list
+
+            // Reverse the blocks array to show the latest block first
+            const reversedBlocks = [...blocks].reverse();  // Create a reversed copy
+            reversedBlocks.forEach(block => {
+                const listItem = document.createElement('li');
+                const blockLink = document.createElement('a');
+                blockLink.href = "#";
+                blockLink.textContent = `Block #${block.blockNumber}: ${block.blockHash}`;
+                blockLink.onclick = () => showBlockDetails(block);
+                
+                listItem.appendChild(blockLink);
+                blocksList.appendChild(listItem);
+            });
+        }
+
+        // Show the block details when the block hash is clicked
+        function showBlockDetails(block) {
+            const blockDetails = document.getElementById('blockDetails');
+            blockDetails.innerHTML = `
+                <h3>Block #${block.blockNumber} Details</h3>
+                <strong>Block Hash:</strong> ${block.blockHash}<br>
+                <strong>Timestamp:</strong> ${block.timestamp}<br>
+                <strong>Number of Transactions:</strong> ${block.transactions.length}
+            `;
+
+            const transactionHashes = document.createElement('div');
+            transactionHashes.style.border = '1px solid #ccc';
+            transactionHashes.style.padding = '10px';
+            transactionHashes.style.marginTop = '10px';
+            transactionHashes.innerHTML = '<strong>Transaction Hashes:</strong><br>';
+
+            block.transactions.forEach(transaction => {
+                const transactionLink = document.createElement('a');
+                transactionLink.href = "#";
+                transactionLink.textContent = transaction.hash;
+                transactionLink.onclick = () => {
+                    alert(`Transaction Details:\n${JSON.stringify(transaction.details, null, 2)}`);
+                };
+                transactionHashes.appendChild(transactionLink);
+                transactionHashes.appendChild(document.createElement('br'));
+            });
+
+            blockDetails.appendChild(transactionHashes);
+        }
+
+        // Function to update the transaction list on the page
+        function updateTransactionList() {
+            const transactionList = document.getElementById('transactionList');
+            transactionList.innerHTML = '';  // Clear transaction list
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('timestamp').value = updateTimestamp();
+            document.getElementById('merkleRoot').disabled = true;  // Disable the Merkle Root field
+            document.getElementById('prevHash').disabled = true;  // Lock the Previous Block Hash field
+        });
+
+        // Function to switch between tabs
+        function openTab(tabName) {
+            const tabs = document.querySelectorAll('.tab-content');
+            tabs.forEach(tab => {
+                tab.style.display = 'none';
+            });
+            document.getElementById(tabName).style.display = 'block';
+        }
+    </script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            text-align: left;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        body[data-theme="dark"] {
+            background-color: #2c3e50;
+            color: white;
+        }
+
+        body[data-theme="light"] {
+            background-color: #ecf0f1;
+            color: black;
+        }
+
+        .tab {
+            display: flex;
+            margin: 20px 0;
+        }
+
+        .tab button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            margin: 0 5px;
+            transition: background-color 0.3s ease;
+        }
+
+        .tab button:hover {
+            background-color: #2980b9;
+        }
+
+        .tab-content {
+            display: none;
+            width: 100%;
+            max-width: 1200px;
+            margin-top: 20px;
+        }
+
+        .active-tab {
+            display: block;
+        }
+
+        input, textarea, select {
+            padding: 12px;
+            font-size: 16px;
+            margin-bottom: 15px;
+            width: 320px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            background-color: #f9f9f9;
+        }
+
+        textarea {
+            resize: none;
+            height: 100px;
+        }
+
+        button {
+            padding: 12px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            transition: background-color 0.3s ease;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        #hashOutput {
+            margin-top: 20px;
+            word-break: break-all;
+            font-family: monospace;
+            font-size: 16px;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 15px;
+        }
+
+        .field label {
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        #transactionList {
+            margin-top: 20px;
+            padding: 10px;
+            width: 350px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #fff;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        #blocksList {
+            margin-top: 20px;
+            padding: 10px;
+            width: 350px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #fff;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        #blockDetails {
+            margin-top: 20px;
+            font-size: 16px;
+            width: 350px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #fff;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        #merkleRoot {
+            background-color: #f0f0f0;
+            cursor: not-allowed;
+        }
+
+        #prevHash {
+            background-color: #f0f0f0;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body data-theme="light">
+    <h1>Manual Miner</h1>
+    <button onclick="toggleDarkMode()">Toggle Dark Mode</button>
+
+    <div class="tab">
+        <button onclick="openTab('tab1')" class="active">Block Mining</button>
+        <button onclick="openTab('tab2')">Transaction Details</button>
+        <button onclick="openTab('tab3')">Block Explorer</button>
+    </div>
+
+    <!-- Block Mining Tab -->
+    <div id="tab1" class="tab-content active-tab">
+        <p>The components below form an essential part of each block in a blockchain, encapsulating vital information necessary for maintaining security and integrity within the network. Understanding how these elements work together helps illuminate how blockchain technology operates and why it is considered secure and reliable.</p>
+        <div class="field">
+            <label for="version">Version (4 bytes):</label>
+            <input id="version" type="text" placeholder="e.g., 00000002" value="00000002" oninput="handleInputChange()">
+        </div>
+        <div class="field">
+            <label for="prevHash">Previous Block Hash (32 bytes):</label>
+            <input id="prevHash" type="text" placeholder="e.g., 0000000000000000..." oninput="handleInputChange()">
+        </div>
+        <div class="field">
+            <label for="merkleRoot">Merkle Root (32 bytes):</label>
+            <input id="merkleRoot" type="text" readonly>
+        </div>
+        <div class="field">
+            <label for="timestamp">Timestamp (4 bytes):</label>
+            <input id="timestamp" type="text" readonly>
+        </div>
+        <div class="field">
+            <label for="bits">Bits (4 bytes):</label>
+            <input id="bits" type="text" placeholder="e.g., 1d00ffff" value="1d00ffff" oninput="handleInputChange()">
+        </div>
+        <div class="field">
+            <label for="nonce">Nonce (4 bytes):</label>
+            <input id="nonce" type="text" placeholder="e.g., 0" value="0" oninput="handleInputChange()">
+        </div>
+        <div id="hashOutput"></div>
+        <button onclick="generateNonceHash()">Generate Nonce</button>
+        <button onclick="openTransactionForm()">Simulate Transaction</button>
+    </div>
+
+    <!-- Transaction Details Tab -->
+    <div id="tab2" class="tab-content">
+        <h3>Transaction Details</h3>
+        <ul id="transactionList">Transactions:</ul>
+    </div>
+
+    <!-- Block Explorer Tab -->
+    <div id="tab3" class="tab-content">
+        <h3>Block Explorer</h3>
+        <ul id="blocksList">
+            <h3>Blocks:</h3>
+        </ul>
+        <div id="blockDetails"></div> <!-- Display block details when clicked -->
+    </div>
+</body>
+</html>
